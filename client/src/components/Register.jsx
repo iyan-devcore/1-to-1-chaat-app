@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { login } from '../services/api';
-import { KeyRound, User } from 'lucide-react';
+import { register } from '../services/api';
+import { KeyRound, User, UserPlus } from 'lucide-react';
 
-export default function Login({ onLogin, onSwitchToRegister }) {
+export default function Register({ onLogin, onSwitchToLogin }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -13,10 +13,10 @@ export default function Login({ onLogin, onSwitchToRegister }) {
         setLoading(true);
         setError('');
         try {
-            const data = await login(username, password);
+            const data = await register(username, password);
             onLogin(data);
         } catch (err) {
-            setError(err.response?.data?.error || 'Login failed');
+            setError(err.response?.data?.error || 'Registration failed');
         } finally {
             setLoading(false);
         }
@@ -30,7 +30,7 @@ export default function Login({ onLogin, onSwitchToRegister }) {
 
             <div className="w-full max-w-md bg-dark-lighter p-8 rounded-2xl shadow-xl border border-slate-700/50 backdrop-blur-sm">
                 <h2 className="text-3xl font-bold mb-6 text-center bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-                    Welcome Back
+                    Create Account
                 </h2>
 
                 {error && (
@@ -49,7 +49,7 @@ export default function Login({ onLogin, onSwitchToRegister }) {
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all duration-300"
-                                placeholder="Enter username"
+                                placeholder="Choose a unique username"
                                 required
                             />
                         </div>
@@ -64,35 +64,31 @@ export default function Login({ onLogin, onSwitchToRegister }) {
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all duration-300"
-                                placeholder="Enter password"
+                                placeholder="Choose a password"
                                 required
                             />
                         </div>
                     </div>
 
                     <button
-                        type="button" // Prevent accidental submit while typing
+                        type="button"
                         onClick={handleSubmit}
                         disabled={loading}
-                        className="w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/25 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/25 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                        {loading ? 'Signing in...' : 'Sign In'}
+                        {loading ? 'Creating...' : <><UserPlus size={20} /> Register</>}
                     </button>
+
+                    <div className="text-center mt-4">
+                        <button
+                            type="button"
+                            onClick={onSwitchToLogin}
+                            className="text-slate-400 hover:text-white text-sm transition"
+                        >
+                            Already have an account? <span className="text-primary hover:underline">Sign In</span>
+                        </button>
+                    </div>
                 </form>
-
-                <div className="text-center mt-4">
-                    <button
-                        type="button"
-                        onClick={onSwitchToRegister}
-                        className="text-slate-400 hover:text-white text-sm transition"
-                    >
-                        Don't have an account? <span className="text-primary hover:underline">Create one</span>
-                    </button>
-                </div>
-
-                <p className="mt-6 text-center text-slate-500 text-sm">
-                    Demo accounts: user1 / password123
-                </p>
             </div>
         </div>
     );

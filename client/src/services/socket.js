@@ -25,6 +25,14 @@ export const sendMessage = (messageData) => {
     if (socket) socket.emit('message', messageData);
 }
 
+export const joinChat = (recipient) => {
+    if (socket) socket.emit('join_chat', recipient);
+};
+
+export const leaveChat = (recipient) => {
+    if (socket) socket.emit('leave_chat', recipient);
+};
+
 export const subscribeToMessages = (cb) => {
     if (!socket) return;
     socket.on('message', msg => {

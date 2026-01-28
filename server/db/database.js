@@ -26,6 +26,7 @@ const initDb = async () => {
       db.run(`CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender TEXT,
+                recipient TEXT,
                 content TEXT,
                 type TEXT DEFAULT 'text',
                 fileUrl TEXT,
@@ -33,6 +34,17 @@ const initDb = async () => {
                 fileSize INTEGER,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
+
+      // Check for recipient column migration
+      db.all("PRAGMA table_info(messages)", (err, rows) => {
+        if (!err && rows) {
+          const hasRecipient = rows.some(r => r.name === 'recipient');
+          if (!hasRecipient) {
+            console.log("Migrating DB: Adding recipient column");
+            db.run("ALTER TABLE messages ADD COLUMN recipient TEXT");
+          }
+        }
+      });
 
       resolve();
     });

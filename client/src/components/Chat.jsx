@@ -1,46 +1,66 @@
 import { useState, useEffect, useRef } from 'react';
-import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory } from '../services/socket';
-import { uploadFile } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User } from 'lucide-react';
+import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat } from '../services/socket';
+import { uploadFile, getUsers } from '../services/api';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft } from 'lucide-react';
 
-export default function Chat({ user, onLogout }) {
+export default function Chat({ user, onLogout, onSettings }) {
     const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
     const [isUploading, setIsUploading] = useState(false);
+    const [users, setUsers] = useState([]);
+    const [selectedUser, setSelectedUser] = useState(null);
     const messagesEndRef = useRef(null);
     const fileInputRef = useRef(null);
 
+    // Initialize socket only once
     useEffect(() => {
-        const socket = initiateSocket(user.token);
+        initiateSocket(user.token);
 
-        subscribeToHistory((history) => {
-            setMessages(history);
-        });
-
-        subscribeToMessages((err, msg) => {
-            if (!err) {
-                setMessages(prev => [...prev, msg]);
-            }
-        });
+        // Load available users
+        getUsers(user.token).then(setUsers).catch(console.error);
 
         return () => {
             disconnectSocket();
         };
     }, [user.token]);
 
+    // Handle user selection and room joining
+    useEffect(() => {
+        if (selectedUser) {
+            setMessages([]); // Clear previous messages
+            joinChat(selectedUser);
+
+            // Subscribe to history for this specific room
+            subscribeToHistory((history) => {
+                setMessages(history);
+            });
+
+            // Subscribe to live messages
+            subscribeToMessages((err, msg) => {
+                if (!err) {
+                    setMessages(prev => [...prev, msg]);
+                }
+            });
+
+            return () => {
+                leaveChat(selectedUser);
+            };
+        }
+    }, [selectedUser]);
+
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
     const handleSend = () => {
-        if (!inputText.trim()) return;
-        sendMessage({ content: inputText, type: 'text' });
+        if (!inputText.trim() || !selectedUser) return;
+        sendMessage({ content: inputText, type: 'text', recipient: selectedUser });
         setInputText('');
     };
 
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
-        if (!file) return;
+        if (!file || !selectedUser) return;
 
         setIsUploading(true);
         try {
@@ -50,6 +70,7 @@ export default function Chat({ user, onLogout }) {
             if (file.type.startsWith('audio/')) type = 'audio';
 
             sendMessage({
+                recipient: selectedUser,
                 content: `Sent a file: ${data.fileName}`,
                 type,
                 fileUrl: data.fileUrl,
@@ -102,104 +123,164 @@ export default function Chat({ user, onLogout }) {
 
     return (
         <div className="flex h-screen bg-dark text-slate-200 font-sans overflow-hidden">
-            {/* Sidebar (Desktop only) */}
-            <div className="hidden md:flex w-80 flex-col border-r border-slate-800 bg-dark-lighter">
+            {/* Sidebar (Responsive) */}
+            <div className={`
+                ${selectedUser ? 'hidden md:flex' : 'flex'} 
+                w-full md:w-80 flex-col border-r border-slate-800 bg-dark-lighter transition-all duration-300
+            `}>
                 <div className="p-4 border-b border-slate-800 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold shadow-lg shadow-primary/20">
                             {user.username[0].toUpperCase()}
                         </div>
                         <div>
-                            <h3 className="font-bold text-white">{user.username}</h3>
+                            <h3 className="font-bold text-white tracking-wide">{user.username}</h3>
                             <div className="flex items-center gap-1.5">
                                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                                <span className="text-xs text-green-500">Online</span>
+                                <span className="text-xs text-green-500 font-medium">Online</span>
                             </div>
                         </div>
                     </div>
-                    <button onClick={onLogout} title="Logout" className="p-2 hover:bg-slate-700 rounded-full transition text-slate-400 hover:text-white">
-                        <LogOut size={20} />
-                    </button>
+                    <div className="flex gap-1">
+                        <button onClick={onSettings} title="Settings" className="p-2.5 hover:bg-slate-700/50 rounded-xl transition text-slate-400 hover:text-white">
+                            <SettingsIcon size={20} />
+                        </button>
+                        <button onClick={onLogout} title="Logout" className="p-2.5 hover:bg-red-500/10 rounded-xl transition text-slate-400 hover:text-red-400">
+                            <LogOut size={20} />
+                        </button>
+                    </div>
                 </div>
 
-                <div className="p-4 overflow-y-auto flex-1">
-                    <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Direct Messages</div>
-                    <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 flex items-center gap-3 cursor-pointer hover:bg-slate-800 transition shadow-sm">
-                        <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-slate-300">
-                            <User size={20} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-slate-200">Chat Room</h4>
-                            <p className="text-xs text-slate-500 truncate">Join the conversation</p>
-                        </div>
+                <div className="p-4 overflow-y-auto flex-1 bg-gradient-to-b from-dark-lighter to-dark">
+                    <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 px-2">Users</div>
+                    <div className="space-y-2">
+                        {users.map((u, idx) => (
+                            <div
+                                key={idx}
+                                onClick={() => setSelectedUser(u)}
+                                className={`
+                                    p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
+                                    ${selectedUser === u
+                                        ? 'bg-primary/10 border-primary/50 shadow-md shadow-primary/5'
+                                        : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
+                                    }
+                                `}
+                            >
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-colors ${selectedUser === u ? 'bg-primary' : 'bg-slate-700'}`}>
+                                    {u[0].toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h4 className={`font-semibold ${selectedUser === u ? 'text-white' : 'text-slate-200'}`}>{u}</h4>
+                                    <p className="text-xs text-slate-500 truncate">Tap to chat</p>
+                                </div>
+                            </div>
+                        ))}
+                        {users.length === 0 && (
+                            <div className="text-center py-10 text-slate-500 italic text-sm">
+                                No other users found. Invite someone!
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
 
             {/* Chat Area */}
-            <div className="flex-1 flex flex-col h-full relative">
-                {/* Header (Mobile only logout) */}
-                <div className="md:hidden p-4 border-b border-slate-800 bg-dark-lighter flex justify-between items-center z-10">
-                    <span className="font-bold text-white">Chat</span>
-                    <button onClick={onLogout} className="text-slate-400"><LogOut size={20} /></button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
-                    {messages.map((msg, idx) => {
-                        const isMe = msg.sender === user.username;
-                        return (
-                            <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
-                                <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
-                                    <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                    <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
-                                        ? 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none'
-                                        : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none'
-                                        }`}>
-                                        {renderMessageContent(msg)}
-                                    </div>
+            <div className={`
+                ${!selectedUser ? 'hidden md:flex' : 'flex'} 
+                flex-1 flex-col h-full relative bg-dark
+            `}>
+                {!selectedUser ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center animate-fade-in">
+                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 text-slate-600">
+                            <MessageSquare size={40} />
+                        </div>
+                        <h2 className="text-2xl font-bold text-slate-300 mb-2">Select a user to chat</h2>
+                        <p className="max-w-md">Choose someone from the sidebar to start a private conversation.</p>
+                    </div>
+                ) : (
+                    <>
+                        {/* Header */}
+                        <div className="p-4 border-b border-slate-800 bg-dark-lighter/95 backdrop-blur flex items-center justify-between z-10 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <button onClick={() => setSelectedUser(null)} className="md:hidden p-2 -ml-2 text-slate-400 hover:text-white">
+                                    <ArrowLeft size={20} />
+                                </button>
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                                    {selectedUser[0].toUpperCase()}
+                                </div>
+                                <div>
+                                    <span className="font-bold text-white block">{selectedUser}</span>
+                                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                                        Active now
+                                    </span>
                                 </div>
                             </div>
-                        )
-                    })}
-                    <div ref={messagesEndRef} />
-                </div>
-
-                {/* Input Area */}
-                <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md">
-                    <div className="max-w-4xl mx-auto flex items-center gap-3">
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileUpload}
-                            className="hidden"
-                        />
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isUploading}
-                            className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${isUploading ? 'animate-pulse' : ''}`}
-                        >
-                            <Paperclip size={20} />
-                        </button>
-
-                        <div className="flex-1 relative">
-                            <input
-                                type="text"
-                                value={inputText}
-                                onChange={(e) => setInputText(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                                placeholder="Type a message..."
-                                className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"
-                            />
                         </div>
 
-                        <button
-                            onClick={handleSend}
-                            className="p-3 bg-primary hover:bg-primary/90 text-white rounded-full shadow-lg shadow-primary/25 transition transform hover:scale-105 active:scale-95"
-                        >
-                            <Send size={20} />
-                        </button>
-                    </div>
-                </div>
+                        {/* Messages */}
+                        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+                            {messages.length === 0 && (
+                                <div className="text-center py-10 text-slate-500">
+                                    <p>No messages yet. Say hello!</p>
+                                </div>
+                            )}
+                            {messages.map((msg, idx) => {
+                                const isMe = msg.sender === user.username;
+                                return (
+                                    <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
+                                        <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
+                                            <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
+                                                ? 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none'
+                                                : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none'
+                                                }`}>
+                                                {renderMessageContent(msg)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                            <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Input Area */}
+                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md">
+                            <div className="max-w-4xl mx-auto flex items-center gap-3">
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    onChange={handleFileUpload}
+                                    className="hidden"
+                                />
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isUploading}
+                                    className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${isUploading ? 'animate-pulse' : ''}`}
+                                >
+                                    <Paperclip size={20} />
+                                </button>
+
+                                <div className="flex-1 relative">
+                                    <input
+                                        type="text"
+                                        value={inputText}
+                                        onChange={(e) => setInputText(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                                        placeholder={`Message ${selectedUser}...`}
+                                        className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={handleSend}
+                                    className="p-3 bg-primary hover:bg-primary/90 text-white rounded-full shadow-lg shadow-primary/25 transition transform hover:scale-105 active:scale-95"
+                                >
+                                    <Send size={20} />
+                                </button>
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );
