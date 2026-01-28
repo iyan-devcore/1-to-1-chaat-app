@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat } from '../services/socket';
 import { uploadFile, getUsers } from '../services/api';
 import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft } from 'lucide-react';
+import { compressImage } from '../utils/imageCompression';
 
 export default function Chat({ user, onLogout, onSettings }) {
     const [messages, setMessages] = useState([]);
@@ -64,7 +65,16 @@ export default function Chat({ user, onLogout, onSettings }) {
 
         setIsUploading(true);
         try {
-            const data = await uploadFile(file, user.token);
+            let fileToUpload = file;
+            if (file.type.startsWith('image/')) {
+                try {
+                    fileToUpload = await compressImage(file);
+                } catch (error) {
+                    console.warn('Image compression failed, falling back to original file:', error);
+                }
+            }
+
+            const data = await uploadFile(fileToUpload, user.token);
             let type = 'file';
             if (file.type.startsWith('image/')) type = 'image';
             if (file.type.startsWith('audio/')) type = 'audio';
