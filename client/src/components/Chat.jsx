@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat } from '../services/socket';
+import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping } from '../services/socket';
 import { uploadFile, getUsers } from '../services/api';
 import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
@@ -10,8 +10,11 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [isUploading, setIsUploading] = useState(false);
     const [users, setUsers] = useState([]);
     const [selectedUser, setSelectedUser] = useState(null);
+    const [typingUser, setTypingUser] = useState(null);
     const messagesEndRef = useRef(null);
     const fileInputRef = useRef(null);
+    const typingTimeoutRef = useRef(null);
+    const isTypingRef = useRef(false);
 
     // Initialize socket only once
     useEffect(() => {
@@ -43,6 +46,13 @@ export default function Chat({ user, onLogout, onSettings }) {
                 }
             });
 
+            // Subscribe to typing events
+            subscribeToTyping(({ user, isTyping }) => {
+                if (user === selectedUser) {
+                    setTypingUser(isTyping ? user : null);
+                }
+            });
+
             return () => {
                 leaveChat(selectedUser);
             };
@@ -57,6 +67,29 @@ export default function Chat({ user, onLogout, onSettings }) {
         if (!inputText.trim() || !selectedUser) return;
         sendMessage({ content: inputText, type: 'text', recipient: selectedUser });
         setInputText('');
+
+        // Stop typing immediately upon sending
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        sendStopTyping(selectedUser);
+        isTypingRef.current = false;
+    };
+
+    const handleInputChange = (e) => {
+        setInputText(e.target.value);
+
+        if (!selectedUser) return;
+
+        if (!isTypingRef.current) {
+            isTypingRef.current = true;
+            sendTyping(selectedUser);
+        }
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+        typingTimeoutRef.current = setTimeout(() => {
+            sendStopTyping(selectedUser);
+            isTypingRef.current = false;
+        }, 2000);
     };
 
     const handleFileUpload = async (e) => {
@@ -132,7 +165,7 @@ export default function Chat({ user, onLogout, onSettings }) {
     };
 
     return (
-        <div className="flex h-screen bg-dark text-slate-200 font-sans overflow-hidden">
+        <div className="flex h-screen h-[100dvh] bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0">
             {/* Sidebar (Responsive) */}
             <div className={`
                 ${selectedUser ? 'hidden md:flex' : 'flex'} 
@@ -210,7 +243,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                 ) : (
                     <>
                         {/* Header */}
-                        <div className="p-4 border-b border-slate-800 bg-dark-lighter/95 backdrop-blur flex items-center justify-between z-10 shadow-sm">
+                        <div className="p-4 border-b border-slate-800 bg-dark-lighter/95 backdrop-blur flex items-center justify-between z-10 shadow-sm sticky top-0 flex-none">
                             <div className="flex items-center gap-3">
                                 <button onClick={() => setSelectedUser(null)} className="md:hidden p-2 -ml-2 text-slate-400 hover:text-white">
                                     <ArrowLeft size={20} />
@@ -218,11 +251,17 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
                                     {selectedUser[0].toUpperCase()}
                                 </div>
-                                <div>
-                                    <span className="font-bold text-white block">{selectedUser}</span>
-                                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                                        Active now
-                                    </span>
+                                <div className="flex flex-col justify-center min-w-0">
+                                    <span className="font-bold text-white block truncate mb-0.5">{selectedUser}</span>
+                                    {typingUser === selectedUser ? (
+                                        <span className="text-xs text-primary font-medium animate-pulse block truncate">
+                                            typing...
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs text-slate-400 block truncate">
+                                            Active now
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -254,7 +293,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md">
+                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md sticky bottom-0 flex-none z-10">
                             <div className="max-w-4xl mx-auto flex items-center gap-3">
                                 <input
                                     type="file"
@@ -274,7 +313,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                                     <input
                                         type="text"
                                         value={inputText}
-                                        onChange={(e) => setInputText(e.target.value)}
+                                        onChange={handleInputChange}
                                         onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                                         placeholder={`Message ${selectedUser}...`}
                                         className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"

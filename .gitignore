@@ -16,8 +16,7 @@ yarn-error.log*
 logs/
 
 # Server
-server/db/*.db
-server/chat.db
+server/db/chat.db
 server/uploads/*
 !server/uploads/.gitkeep
 

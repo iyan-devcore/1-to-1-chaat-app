@@ -46,3 +46,17 @@ export const subscribeToHistory = (cb) => {
         cb(messages);
     });
 };
+
+export const sendTyping = (recipient) => {
+    if (socket) socket.emit('typing', recipient);
+};
+
+export const sendStopTyping = (recipient) => {
+    if (socket) socket.emit('stop_typing', recipient);
+};
+
+export const subscribeToTyping = (cb) => {
+    if (!socket) return;
+    socket.on('user_typing', (data) => cb({ ...data, isTyping: true }));
+    socket.on('user_stopped_typing', (data) => cb({ ...data, isTyping: false }));
+};

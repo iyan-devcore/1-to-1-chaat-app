@@ -74,6 +74,16 @@ module.exports = (io, sessions) => {
             stmt.finalize();
         });
 
+        socket.on('typing', (targetUser) => {
+            const roomName = [username, targetUser].sort().join('_');
+            socket.to(roomName).emit('user_typing', { user: username });
+        });
+
+        socket.on('stop_typing', (targetUser) => {
+            const roomName = [username, targetUser].sort().join('_');
+            socket.to(roomName).emit('user_stopped_typing', { user: username });
+        });
+
         socket.on('disconnect', () => {
             console.log('User disconnected');
         });
