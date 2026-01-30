@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping } from '../services/socket';
 import { uploadFile, getUsers } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft } from 'lucide-react';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
+import ExpressionPicker from './ExpressionPicker';
 
 export default function Chat({ user, onLogout, onSettings }) {
     const [messages, setMessages] = useState([]);
@@ -11,6 +12,7 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [users, setUsers] = useState([]);
     const [selectedUser, setSelectedUser] = useState(null);
     const [typingUser, setTypingUser] = useState(null);
+    const [showPicker, setShowPicker] = useState(false);
     const messagesEndRef = useRef(null);
     const fileInputRef = useRef(null);
     const typingTimeoutRef = useRef(null);
@@ -129,6 +131,48 @@ export default function Chat({ user, onLogout, onSettings }) {
         }
     };
 
+
+    const handleEmojiClick = (emojiObject) => {
+        setInputText(prev => prev + emojiObject.emoji);
+    };
+
+    const handleStickerClick = (url) => {
+        if (!selectedUser) return;
+        sendMessage({
+            recipient: selectedUser,
+            content: 'Sticker',
+            type: 'sticker',
+            fileUrl: url,
+            fileName: 'sticker.gif',
+            fileSize: 0
+        });
+        setShowPicker(false);
+    };
+
+    const handleCustomStickerUpload = async (file) => {
+        if (!selectedUser || !file) return;
+
+        setIsUploading(true);
+        try {
+            const data = await uploadFile(file, user.token);
+
+            sendMessage({
+                recipient: selectedUser,
+                content: 'Sticker',
+                type: 'sticker',
+                fileUrl: data.fileUrl,
+                fileName: data.fileName,
+                fileSize: data.fileSize
+            });
+            setShowPicker(false);
+        } catch (err) {
+            console.error('Sticker upload failed', err);
+            alert('Sticker upload failed');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
     const renderMessageContent = (msg) => {
         switch (msg.type) {
             case 'image':
@@ -158,6 +202,12 @@ export default function Chat({ user, onLogout, onSettings }) {
                         </div>
                         <Download size={16} className="text-slate-400" />
                     </a>
+                );
+            case 'sticker':
+                return (
+                    <div className="w-32 h-32 md:w-40 md:h-40">
+                        <img src={msg.fileUrl} alt="Sticker" className="w-full h-full object-contain drop-shadow-md hover:scale-105 transition-transform" />
+                    </div>
                 );
             default:
                 return <p className="whitespace-pre-wrap break-words">{msg.content}</p>;
@@ -280,8 +330,8 @@ export default function Chat({ user, onLogout, onSettings }) {
                                         <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
                                             <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
-                                                ? 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none'
-                                                : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none'
+                                                ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
+                                                : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')
                                                 }`}>
                                                 {renderMessageContent(msg)}
                                             </div>
@@ -301,6 +351,28 @@ export default function Chat({ user, onLogout, onSettings }) {
                                     onChange={handleFileUpload}
                                     className="hidden"
                                 />
+                                {/* Emoji Picker Popover */}
+                                <div className="relative">
+                                    {showPicker && (
+                                        <>
+                                            <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)} />
+                                            <div className="absolute bottom-12 left-0 z-50">
+                                                <ExpressionPicker
+                                                    onEmojiClick={handleEmojiClick}
+                                                    onStickerClick={handleStickerClick}
+                                                    onCustomStickerUpload={handleCustomStickerUpload}
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+                                    <button
+                                        onClick={() => setShowPicker(!showPicker)}
+                                        className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${showPicker ? 'text-primary border-primary/50' : ''}`}
+                                    >
+                                        <Smile size={20} />
+                                    </button>
+                                </div>
+
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
                                     disabled={isUploading}
@@ -315,6 +387,20 @@ export default function Chat({ user, onLogout, onSettings }) {
                                         value={inputText}
                                         onChange={handleInputChange}
                                         onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                                        onPaste={(e) => {
+                                            const items = e.clipboardData?.items;
+                                            if (items) {
+                                                for (let i = 0; i < items.length; i++) {
+                                                    if (items[i].type.indexOf("image") !== -1) {
+                                                        const blob = items[i].getAsFile();
+                                                        if (blob) {
+                                                            handleCustomStickerUpload(blob);
+                                                            e.preventDefault(); // Prevent pasting the filename text
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }}
                                         placeholder={`Message ${selectedUser}...`}
                                         className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"
                                     />
