@@ -215,7 +215,7 @@ export default function Chat({ user, onLogout, onSettings }) {
     };
 
     return (
-        <div className="flex h-screen h-[100dvh] bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0">
+        <div className="flex bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0 w-full" style={{ height: '100dvh' }}>
             {/* Sidebar (Responsive) */}
             <div className={`
                 ${selectedUser ? 'hidden md:flex' : 'flex'} 
@@ -343,7 +343,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md sticky bottom-0 flex-none z-10">
+                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md flex-none z-10">
                             <div className="max-w-4xl mx-auto flex items-center gap-3">
                                 <input
                                     type="file"
