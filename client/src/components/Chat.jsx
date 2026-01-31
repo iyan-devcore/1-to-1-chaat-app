@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping } from '../services/socket';
 import { uploadFile, getUsers } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile } from 'lucide-react';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
 import ExpressionPicker from './ExpressionPicker';
 
@@ -13,10 +13,95 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [selectedUser, setSelectedUser] = useState(null);
     const [typingUser, setTypingUser] = useState(null);
     const [showPicker, setShowPicker] = useState(false);
+    const [fullscreenImage, setFullscreenImage] = useState(null);
+
+    // Recording State
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingDuration, setRecordingDuration] = useState(0);
+
     const messagesEndRef = useRef(null);
     const fileInputRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const isTypingRef = useRef(false);
+
+    // Recording Refs
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
+    const timerRef = useRef(null);
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = handleRecordingStop;
+
+            mediaRecorder.start();
+            setIsRecording(true);
+            setRecordingDuration(0);
+
+            timerRef.current = setInterval(() => {
+                setRecordingDuration(prev => prev + 1);
+            }, 1000);
+
+        } catch (err) {
+            console.error("Error accessing microphone:", err);
+            alert("Could not access microphone");
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            mediaRecorderRef.current.stop();
+            // Stop all tracks to release microphone
+            mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+            setIsRecording(false);
+            if (timerRef.current) clearInterval(timerRef.current);
+        }
+    };
+
+    const cancelRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            // Remove onstop handler so we don't upload
+            mediaRecorderRef.current.onstop = null;
+            mediaRecorderRef.current.stop();
+            mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+            setIsRecording(false);
+            if (timerRef.current) clearInterval(timerRef.current);
+            setRecordingDuration(0);
+        }
+    };
+
+    const handleRecordingStop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioFile = new File([audioBlob], "voice-message.webm", { type: 'audio/webm' });
+
+        setIsUploading(true);
+        try {
+            const data = await uploadFile(audioFile, user.token);
+            sendMessage({
+                recipient: selectedUser,
+                content: 'Audio Message',
+                type: 'audio',
+                fileUrl: data.fileUrl,
+                fileName: data.fileName,
+                fileSize: data.fileSize
+            });
+        } catch (err) {
+            console.error('Audio upload failed', err);
+            alert("Failed to send audio");
+        } finally {
+            setIsUploading(false);
+        }
+    };
 
     // Initialize socket only once
     useEffect(() => {
@@ -196,7 +281,12 @@ export default function Chat({ user, onLogout, onSettings }) {
             case 'image':
                 return (
                     <div className="space-y-2">
-                        <img src={msg.fileUrl} alt="Uploaded content" className="max-w-full sm:max-w-xs rounded-lg shadow-md border border-slate-700/50" />
+                        <img
+                            src={msg.fileUrl}
+                            alt="Uploaded content"
+                            className="max-w-full sm:max-w-xs rounded-lg shadow-md border border-slate-700/50 cursor-pointer hover:opacity-90 transition"
+                            onClick={() => setFullscreenImage(msg.fileUrl)}
+                        />
                         <a href={msg.fileUrl} download={msg.fileName} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                             <Download size={12} /> Download full size
                         </a>
@@ -377,79 +467,146 @@ export default function Chat({ user, onLogout, onSettings }) {
 
                         {/* Input Area */}
                         <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md flex-none z-10">
-                            <div className="max-w-4xl mx-auto flex items-center gap-3">
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    onChange={handleFileUpload}
-                                    className="hidden"
-                                />
-                                {/* Emoji Picker Popover */}
-                                <div className="relative">
-                                    {showPicker && (
-                                        <>
-                                            <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)} />
-                                            <div className="absolute bottom-12 left-0 z-50">
-                                                <ExpressionPicker
-                                                    onEmojiClick={handleEmojiClick}
-                                                    onStickerClick={handleStickerClick}
-                                                    onCustomStickerUpload={handleCustomStickerUpload}
-                                                />
-                                            </div>
-                                        </>
-                                    )}
-                                    <button
-                                        onClick={() => setShowPicker(!showPicker)}
-                                        className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${showPicker ? 'text-primary border-primary/50' : ''}`}
-                                    >
-                                        <Smile size={20} />
-                                    </button>
+                            {isRecording ? (
+                                <div className="flex-1 flex items-center gap-4 bg-slate-900 border border-red-500/30 rounded-full py-2 px-4 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-subtle">
+                                    <div className="flex items-center gap-2 text-red-500 font-medium whitespace-nowrap min-w-[80px]">
+                                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                                        <span>{Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}</span>
+                                    </div>
+
+                                    <div className="flex-1 h-8 flex items-center gap-1 opacity-50 overflow-hidden">
+                                        {Array.from({ length: 20 }).map((_, i) => (
+                                            <div key={i} className="w-1 bg-red-500 rounded-full animate-wave" style={{
+                                                height: `${Math.random() * 100}%`,
+                                                animationDelay: `${i * 0.05}s`
+                                            }} />
+                                        ))}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={cancelRecording}
+                                            className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-full transition"
+                                            title="Cancel"
+                                        >
+                                            <Trash2 size={20} />
+                                        </button>
+                                        <button
+                                            onClick={stopRecording}
+                                            disabled={isUploading}
+                                            className="p-2 bg-red-500 text-white hover:bg-red-600 rounded-full shadow-lg shadow-red-500/20 transition transform hover:scale-105 active:scale-95"
+                                            title="Send Audio"
+                                        >
+                                            {isUploading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={20} />}
+                                        </button>
+                                    </div>
                                 </div>
-
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={isUploading}
-                                    className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${isUploading ? 'animate-pulse' : ''}`}
-                                >
-                                    <Paperclip size={20} />
-                                </button>
-
-                                <div className="flex-1 relative">
+                            ) : (
+                                <div className="max-w-4xl mx-auto flex items-center gap-3 w-full">
                                     <input
-                                        type="text"
-                                        value={inputText}
-                                        onChange={handleInputChange}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                                        onPaste={(e) => {
-                                            const items = e.clipboardData?.items;
-                                            if (items) {
-                                                for (let i = 0; i < items.length; i++) {
-                                                    if (items[i].type.indexOf("image") !== -1) {
-                                                        const blob = items[i].getAsFile();
-                                                        if (blob) {
-                                                            handleCustomStickerUpload(blob);
-                                                            e.preventDefault(); // Prevent pasting the filename text
+                                        type="file"
+                                        ref={fileInputRef}
+                                        onChange={handleFileUpload}
+                                        className="hidden"
+                                    />
+                                    {/* Emoji Picker Popover */}
+                                    <div className="relative">
+                                        {showPicker && (
+                                            <>
+                                                <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)} />
+                                                <div className="absolute bottom-12 left-0 z-50">
+                                                    <ExpressionPicker
+                                                        onEmojiClick={handleEmojiClick}
+                                                        onStickerClick={handleStickerClick}
+                                                        onCustomStickerUpload={handleCustomStickerUpload}
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+                                        <button
+                                            onClick={() => setShowPicker(!showPicker)}
+                                            className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${showPicker ? 'text-primary border-primary/50' : ''}`}
+                                        >
+                                            <Smile size={20} />
+                                        </button>
+                                    </div>
+
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={isUploading}
+                                        className={`p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition border border-slate-700 ${isUploading ? 'animate-pulse' : ''}`}
+                                    >
+                                        <Paperclip size={20} />
+                                    </button>
+
+                                    <div className="flex-1 relative">
+                                        <input
+                                            type="text"
+                                            value={inputText}
+                                            onChange={handleInputChange}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                                            onPaste={(e) => {
+                                                const items = e.clipboardData?.items;
+                                                if (items) {
+                                                    for (let i = 0; i < items.length; i++) {
+                                                        if (items[i].type.indexOf("image") !== -1) {
+                                                            const blob = items[i].getAsFile();
+                                                            if (blob) {
+                                                                handleCustomStickerUpload(blob);
+                                                                e.preventDefault(); // Prevent pasting the filename text
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
-                                        }}
-                                        placeholder={`Message ${selectedUser}...`}
-                                        className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"
-                                    />
-                                </div>
+                                            }}
+                                            placeholder={`Message ${selectedUser}...`}
+                                            className="w-full bg-slate-900 border border-slate-700 text-white rounded-full py-3 px-5 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition placeholder-slate-500"
+                                        />
+                                    </div>
 
-                                <button
-                                    onClick={handleSend}
-                                    className="p-3 bg-primary hover:bg-primary/90 text-white rounded-full shadow-lg shadow-primary/25 transition transform hover:scale-105 active:scale-95"
-                                >
-                                    <Send size={20} />
-                                </button>
-                            </div>
+                                    {inputText.trim() ? (
+                                        <button
+                                            onClick={handleSend}
+                                            className="p-3 bg-primary hover:bg-primary/90 text-white rounded-full shadow-lg shadow-primary/25 transition transform hover:scale-105 active:scale-95"
+                                        >
+                                            <Send size={20} />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={startRecording}
+                                            className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full border border-slate-700 transition transform hover:scale-105 active:scale-95"
+                                            title="Record Audio"
+                                        >
+                                            <Mic size={20} />
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
             </div>
+
+            {/* Fullscreen Image Overlay */}
+            {fullscreenImage && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4 animate-fade-in"
+                    onClick={() => setFullscreenImage(null)}
+                >
+                    <button
+                        onClick={() => setFullscreenImage(null)}
+                        className="absolute top-4 right-4 p-2 bg-slate-800/50 hover:bg-slate-700 text-white rounded-full transition"
+                    >
+                        <X size={24} />
+                    </button>
+                    <img
+                        src={fullscreenImage}
+                        alt="Fullscreen view"
+                        className="max-h-full max-w-full object-contain"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            )}
         </div>
     );
 }
