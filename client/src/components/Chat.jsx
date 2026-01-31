@@ -30,26 +30,29 @@ export default function Chat({ user, onLogout, onSettings }) {
         };
     }, [user.token]);
 
+    const isHistoryLoadRef = useRef(false);
+
     // Handle user selection and room joining
     useEffect(() => {
         if (selectedUser) {
             setMessages([]); // Clear previous messages
+            isHistoryLoadRef.current = true;
             joinChat(selectedUser);
 
             // Subscribe to history for this specific room
-            subscribeToHistory((history) => {
+            const unsubscribeHistory = subscribeToHistory((history) => {
                 setMessages(history);
             });
 
             // Subscribe to live messages
-            subscribeToMessages((err, msg) => {
+            const unsubscribeMessages = subscribeToMessages((err, msg) => {
                 if (!err) {
                     setMessages(prev => [...prev, msg]);
                 }
             });
 
             // Subscribe to typing events
-            subscribeToTyping(({ user, isTyping }) => {
+            const unsubscribeTyping = subscribeToTyping(({ user, isTyping }) => {
                 if (user === selectedUser) {
                     setTypingUser(isTyping ? user : null);
                 }
@@ -57,12 +60,27 @@ export default function Chat({ user, onLogout, onSettings }) {
 
             return () => {
                 leaveChat(selectedUser);
+                if (unsubscribeHistory) unsubscribeHistory();
+                if (unsubscribeMessages) unsubscribeMessages();
+                if (unsubscribeTyping) unsubscribeTyping();
             };
         }
     }, [selectedUser]);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        const timeoutId = setTimeout(() => {
+            if (isHistoryLoadRef.current) {
+                messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+                // Only mark history load as done if we actually have messages or it's been a moment
+                // But generally, the first update after user selection is history.
+                // We keep it true until the effect runs with data.
+                if (messages.length > 0) isHistoryLoadRef.current = false;
+            } else {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }
+        }, 100); // Small delay ensures DOM is fully rendered specially with images
+
+        return () => clearTimeout(timeoutId);
     }, [messages]);
 
     const handleSend = () => {
@@ -214,6 +232,21 @@ export default function Chat({ user, onLogout, onSettings }) {
         }
     };
 
+    const formatMessageTime = (timestamp) => {
+        if (!timestamp) return '';
+        try {
+            // Check if it's the SQLite default string 'YYYY-MM-DD HH:MM:SS' (likely UTC)
+            // If so, append 'Z' to treat it as UTC so toLocaleTimeString works correctly against local timezone
+            let ts = timestamp;
+            if (typeof ts === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ts)) {
+                ts = ts.replace(' ', 'T') + 'Z';
+            }
+            return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch (e) {
+            return '';
+        }
+    };
+
     return (
         <div className="flex bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0 w-full" style={{ height: '100dvh' }}>
             {/* Sidebar (Responsive) */}
@@ -328,7 +361,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 return (
                                     <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
                                         <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
-                                            <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {formatMessageTime(msg.timestamp)}</span>
                                             <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
                                                 ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
                                                 : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')

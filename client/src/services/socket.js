@@ -35,16 +35,20 @@ export const leaveChat = (recipient) => {
 
 export const subscribeToMessages = (cb) => {
     if (!socket) return;
-    socket.on('message', msg => {
+    const listener = (msg) => {
         cb(null, msg);
-    });
+    };
+    socket.on('message', listener);
+    return () => socket.off('message', listener);
 };
 
 export const subscribeToHistory = (cb) => {
     if (!socket) return;
-    socket.on('history', (messages) => {
+    const listener = (messages) => {
         cb(messages);
-    });
+    };
+    socket.on('history', listener);
+    return () => socket.off('history', listener);
 };
 
 export const sendTyping = (recipient) => {
@@ -57,6 +61,15 @@ export const sendStopTyping = (recipient) => {
 
 export const subscribeToTyping = (cb) => {
     if (!socket) return;
-    socket.on('user_typing', (data) => cb({ ...data, isTyping: true }));
-    socket.on('user_stopped_typing', (data) => cb({ ...data, isTyping: false }));
+    const typingListener = (data) => cb({ ...data, isTyping: true });
+    const stopTypingListener = (data) => cb({ ...data, isTyping: false });
+
+    socket.on('user_typing', typingListener);
+    socket.on('user_stopped_typing', stopTypingListener);
+
+    return () => {
+        socket.off('user_typing', typingListener);
+        socket.off('user_stopped_typing', stopTypingListener);
+    };
 };
+
