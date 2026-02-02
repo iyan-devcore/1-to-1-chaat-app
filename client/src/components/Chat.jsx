@@ -133,6 +133,34 @@ export default function Chat({ user, onLogout, onSettings }) {
             const unsubscribeMessages = subscribeToMessages((err, msg) => {
                 if (!err) {
                     setMessages(prev => [...prev, msg]);
+
+                    // Handle Notifications
+                    if (msg.sender !== user.username) {
+                        const notificationsEnabled = localStorage.getItem('notifications') === 'true';
+                        if (notificationsEnabled && (document.hidden || !document.hasFocus())) {
+                            // Try Service Worker first (standard for mobile/PWA)
+                            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                                navigator.serviceWorker.ready.then(registration => {
+                                    registration.showNotification(`Message from ${msg.sender}`, {
+                                        body: msg.type === 'text' ? msg.content : `Sent a ${msg.type}`,
+                                        tag: 'chat-msg',
+                                        icon: '/vite.svg', // Fallback icon, ideally use app icon
+                                        vibrate: [200, 100, 200]
+                                    });
+                                });
+                            } else {
+                                // Fallback to classic API
+                                try {
+                                    new Notification(`Message from ${msg.sender}`, {
+                                        body: msg.type === 'text' ? msg.content : `Sent a ${msg.type}`,
+                                        tag: 'chat-msg'
+                                    });
+                                } catch (e) {
+                                    console.error("Notification error:", e);
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
