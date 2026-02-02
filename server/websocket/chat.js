@@ -16,18 +16,37 @@ module.exports = (io, sessions) => {
         // User joins their own room for direct notifications
         socket.join(username);
 
+        // Update online status
+        db.run("UPDATE users SET is_online = 1 WHERE username = ?", [username], (err) => {
+            if (!err) {
+                socket.broadcast.emit('user_status_change', { username, is_online: 1 });
+            }
+        });
+
         // Client requests history with a specific user
         socket.on('join_chat', (targetUser) => {
             const roomName = [username, targetUser].sort().join('_');
             socket.join(roomName);
 
-            // Fetch history for these two users
-            db.all(
-                "SELECT * FROM messages WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) ORDER BY timestamp ASC",
-                [username, targetUser, targetUser, username],
-                (err, rows) => {
-                    if (err) return;
-                    socket.emit('history', rows);
+            // Mark unread messages from targetUser as read
+            db.run(
+                "UPDATE messages SET status = 'read' WHERE sender = ? AND recipient = ? AND status != 'read'",
+                [targetUser, username],
+                function (err) {
+                    if (!err && this.changes > 0) {
+                        // Notify the sender (targetUser) that their messages were read
+                        io.to(targetUser).emit('status_update', { reader: username });
+                    }
+
+                    // Fetch history for these two users
+                    db.all(
+                        "SELECT * FROM messages WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) ORDER BY timestamp ASC",
+                        [username, targetUser, targetUser, username],
+                        (err, rows) => {
+                            if (err) return;
+                            socket.emit('history', rows);
+                        }
+                    );
                 }
             );
         });
@@ -38,14 +57,29 @@ module.exports = (io, sessions) => {
             socket.leave(roomName);
         });
 
+        socket.on('mark_read', (data) => {
+            const { sender } = data;
+            if (!sender) return;
+
+            db.run(
+                "UPDATE messages SET status = 'read' WHERE sender = ? AND recipient = ? AND status != 'read'",
+                [sender, username],
+                function (err) {
+                    if (!err && this.changes > 0) {
+                        io.to(sender).emit('status_update', { reader: username });
+                    }
+                }
+            );
+        });
+
         socket.on('message', (msg) => {
             // msg: { recipient, content, type, fileUrl, fileName, fileSize }
             const { recipient, content, type, fileUrl, fileName, fileSize } = msg;
 
             if (!recipient) return; // Must have recipient
 
-            const stmt = db.prepare("INSERT INTO messages (sender, recipient, content, type, fileUrl, fileName, fileSize) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            stmt.run(username, recipient, content, type || 'text', fileUrl, fileName, fileSize, function (err) {
+            const stmt = db.prepare("INSERT INTO messages (sender, recipient, content, type, fileUrl, fileName, fileSize, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            stmt.run(username, recipient, content, type || 'text', fileUrl, fileName, fileSize, 'sent', function (err) {
                 if (err) return console.error(err);
 
                 const newMessage = {
@@ -57,6 +91,7 @@ module.exports = (io, sessions) => {
                     fileUrl,
                     fileName,
                     fileSize,
+                    status: 'sent',
                     timestamp: new Date().toISOString()
                 };
 
@@ -65,11 +100,6 @@ module.exports = (io, sessions) => {
 
                 // Emit to the room (covers both users if they are focused on this chat)
                 io.to(roomName).emit('message', newMessage);
-
-                // Also emit to recipient's personal room for notifications (if implemented later) or if they aren't in the specific chat room yet?
-                // Actually, if we use the room strategy, we rely on them being joined.
-                // But if the other user relies on a global 'message' event for unread counts, we might want to emit to them directly too.
-                // For now, sticking to the detailed view strategy.
             });
             stmt.finalize();
         });
@@ -86,6 +116,14 @@ module.exports = (io, sessions) => {
 
         socket.on('disconnect', () => {
             console.log('User disconnected');
+            if (username) {
+                const now = new Date().toISOString();
+                db.run("UPDATE users SET is_online = 0, last_seen = ? WHERE username = ?", [now, username], (err) => {
+                    if (!err) {
+                        socket.broadcast.emit('user_status_change', { username, is_online: 0, last_seen: now });
+                    }
+                });
+            }
         });
     });
 };

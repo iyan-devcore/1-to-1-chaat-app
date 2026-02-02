@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping } from '../services/socket';
+import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping, markRead, subscribeToStatusUpdates, subscribeToUserStatus } from '../services/socket';
 import { uploadFile, getUsers } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X } from 'lucide-react';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X, Check, CheckCheck } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
 import ExpressionPicker from './ExpressionPicker';
 
@@ -108,9 +108,31 @@ export default function Chat({ user, onLogout, onSettings }) {
         initiateSocket(user.token);
 
         // Load available users
-        getUsers(user.token).then(setUsers).catch(console.error);
+        getUsers(user.token).then(data => {
+            if (Array.isArray(data)) {
+                // handle both old string array and new object array for safety during migration
+                const formatted = data.map(u => typeof u === 'string' ? { username: u, is_online: 0 } : u);
+                setUsers(formatted);
+            } else {
+                console.warn("getUsers returned non-array:", data);
+                setUsers([]);
+            }
+        }).catch(err => {
+            console.error("Failed to load users:", err);
+            setUsers([]);
+        });
+
+        const unsubscribeUserStatus = subscribeToUserStatus(({ username, is_online, last_seen }) => {
+            setUsers(prev => prev.map(u => {
+                if (u.username === username) {
+                    return { ...u, is_online, last_seen };
+                }
+                return u;
+            }));
+        });
 
         return () => {
+            if (unsubscribeUserStatus) unsubscribeUserStatus();
             disconnectSocket();
         };
     }, [user.token]);
@@ -133,6 +155,11 @@ export default function Chat({ user, onLogout, onSettings }) {
             const unsubscribeMessages = subscribeToMessages((err, msg) => {
                 if (!err) {
                     setMessages(prev => [...prev, msg]);
+
+                    // If we receive a message from the user we are chatting with, mark it as read immediately
+                    if (msg.sender === selectedUser) {
+                        markRead(selectedUser);
+                    }
 
                     // Handle Notifications
                     if (msg.sender !== user.username) {
@@ -164,6 +191,15 @@ export default function Chat({ user, onLogout, onSettings }) {
                 }
             });
 
+            // Subscribe to status updates (read receipts)
+            const unsubscribeStatus = subscribeToStatusUpdates(({ reader }) => {
+                if (reader === selectedUser) {
+                    setMessages(prev => prev.map(msg =>
+                        msg.sender === user.username ? { ...msg, status: 'read' } : msg
+                    ));
+                }
+            });
+
             // Subscribe to typing events
             const unsubscribeTyping = subscribeToTyping(({ user, isTyping }) => {
                 if (user === selectedUser) {
@@ -176,6 +212,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                 if (unsubscribeHistory) unsubscribeHistory();
                 if (unsubscribeMessages) unsubscribeMessages();
                 if (unsubscribeTyping) unsubscribeTyping();
+                if (unsubscribeStatus) unsubscribeStatus();
             };
         }
     }, [selectedUser]);
@@ -365,6 +402,26 @@ export default function Chat({ user, onLogout, onSettings }) {
         }
     };
 
+    const formatLastSeen = (timestamp) => {
+        if (!timestamp) return '';
+        try {
+            let ts = timestamp;
+            if (typeof ts === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ts)) {
+                ts = ts.replace(' ', 'T') + 'Z';
+            }
+            const date = new Date(ts);
+            const now = new Date();
+            const isToday = date.toDateString() === now.toDateString();
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            return isToday ? `Last seen today at ${timeStr}` : `Last seen on ${date.toLocaleDateString()} at ${timeStr}`;
+        } catch (e) {
+            return '';
+        }
+    };
+
+
+
     return (
         <div className="flex bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0 w-full" style={{ height: '100dvh' }}>
             {/* Sidebar (Responsive) */}
@@ -401,21 +458,26 @@ export default function Chat({ user, onLogout, onSettings }) {
                         {users.map((u, idx) => (
                             <div
                                 key={idx}
-                                onClick={() => setSelectedUser(u)}
+                                onClick={() => setSelectedUser(u.username)}
                                 className={`
                                     p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
-                                    ${selectedUser === u
+                                    ${selectedUser === u.username
                                         ? 'bg-primary/10 border-primary/50 shadow-md shadow-primary/5'
                                         : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
                                     }
                                 `}
                             >
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-colors ${selectedUser === u ? 'bg-primary' : 'bg-slate-700'}`}>
-                                    {u[0].toUpperCase()}
+                                <div className={`relative w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-colors ${selectedUser === u.username ? 'bg-primary' : 'bg-slate-700'}`}>
+                                    {u.username[0].toUpperCase()}
+                                    {u.is_online === 1 && (
+                                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-dark rounded-full"></span>
+                                    )}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <h4 className={`font-semibold ${selectedUser === u ? 'text-white' : 'text-slate-200'}`}>{u}</h4>
-                                    <p className="text-xs text-slate-500 truncate">Tap to chat</p>
+                                    <h4 className={`font-semibold ${selectedUser === u.username ? 'text-white' : 'text-slate-200'}`}>{u.username}</h4>
+                                    <p className="text-xs text-slate-500 truncate">
+                                        {u.is_online === 1 ? 'Online' : 'Offline'}
+                                    </p>
                                 </div>
                             </div>
                         ))}
@@ -452,20 +514,37 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
                                     {selectedUser[0].toUpperCase()}
                                 </div>
-                                <div className="flex flex-col justify-center min-w-0">
-                                    <span className="font-bold text-white block truncate mb-0.5">{selectedUser}</span>
-                                    {typingUser === selectedUser ? (
-                                        <span className="text-xs text-primary font-medium animate-pulse block truncate">
-                                            typing...
-                                        </span>
-                                    ) : (
-                                        <span className="text-xs text-slate-400 block truncate">
-                                            Active now
-                                        </span>
-                                    )}
-                                </div>
+                                {(() => {
+                                    const targetUserObj = users.find(u => u.username === selectedUser);
+                                    const isOnline = targetUserObj?.is_online;
+                                    const lastSeen = targetUserObj?.last_seen;
+
+                                    return (
+                                        <>
+                                            <span className="font-bold text-white block truncate mb-0.5">{selectedUser}</span>
+                                            {typingUser === selectedUser ? (
+                                                <span className="text-xs text-primary font-medium animate-pulse block truncate">
+                                                    typing...
+                                                </span>
+                                            ) : isOnline ? (
+                                                <span className="text-xs text-primary font-medium block truncate">
+                                                    Online
+                                                </span>
+                                            ) : lastSeen ? (
+                                                <span className="text-xs text-slate-400 block truncate">
+                                                    {formatLastSeen(lastSeen)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-slate-400 block truncate">
+                                                    Offline
+                                                </span>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
+
 
                         {/* Messages */}
                         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
@@ -479,7 +558,14 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 return (
                                     <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
                                         <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
-                                            <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.sender} • {formatMessageTime(msg.timestamp)}</span>
+                                            <span className="text-[10px] text-slate-500 mb-1 px-1 flex items-center gap-1">
+                                                {msg.sender} • {formatMessageTime(msg.timestamp)}
+                                                {isMe && (
+                                                    msg.status === 'read' ?
+                                                        <CheckCheck size={14} className="text-blue-500" /> :
+                                                        <Check size={14} className="text-slate-500" />
+                                                )}
+                                            </span>
                                             <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
                                                 ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
                                                 : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')
@@ -616,25 +702,27 @@ export default function Chat({ user, onLogout, onSettings }) {
             </div>
 
             {/* Fullscreen Image Overlay */}
-            {fullscreenImage && (
-                <div
-                    className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4 animate-fade-in"
-                    onClick={() => setFullscreenImage(null)}
-                >
-                    <button
+            {
+                fullscreenImage && (
+                    <div
+                        className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4 animate-fade-in"
                         onClick={() => setFullscreenImage(null)}
-                        className="absolute top-4 right-4 p-2 bg-slate-800/50 hover:bg-slate-700 text-white rounded-full transition"
                     >
-                        <X size={24} />
-                    </button>
-                    <img
-                        src={fullscreenImage}
-                        alt="Fullscreen view"
-                        className="max-h-full max-w-full object-contain"
-                        onClick={(e) => e.stopPropagation()}
-                    />
-                </div>
-            )}
-        </div>
+                        <button
+                            onClick={() => setFullscreenImage(null)}
+                            className="absolute top-4 right-4 p-2 bg-slate-800/50 hover:bg-slate-700 text-white rounded-full transition"
+                        >
+                            <X size={24} />
+                        </button>
+                        <img
+                            src={fullscreenImage}
+                            alt="Fullscreen view"
+                            className="max-h-full max-w-full object-contain"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                    </div>
+                )
+            }
+        </div >
     );
 }

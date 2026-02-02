@@ -73,3 +73,21 @@ export const subscribeToTyping = (cb) => {
     };
 };
 
+export const markRead = (sender) => {
+    if (socket) socket.emit('mark_read', { sender });
+};
+
+export const subscribeToStatusUpdates = (cb) => {
+    if (!socket) return;
+    const listener = (data) => cb(data);
+    socket.on('status_update', listener);
+    return () => socket.off('status_update', listener);
+};
+
+export const subscribeToUserStatus = (cb) => {
+    if (!socket) return;
+    const listener = (data) => cb(data);
+    socket.on('user_status_change', listener);
+    return () => socket.off('user_status_change', listener);
+};
+

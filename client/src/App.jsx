@@ -4,6 +4,7 @@ import Register from './components/Register';
 import Chat from './components/Chat';
 import Settings from './components/Settings';
 import WelcomeBack from './components/WelcomeBack';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
     const [user, setUser] = useState(null);
@@ -50,7 +51,11 @@ function App() {
             if (view === 'settings') {
                 return <Settings user={user} onBack={() => setView('chat')} onUpdateUser={handleUpdateUser} />;
             }
-            return <Chat user={user} onLogout={handleLogout} onSettings={() => setView('settings')} />;
+            return (
+                <ErrorBoundary>
+                    <Chat user={user} onLogout={handleLogout} onSettings={() => setView('settings')} />
+                </ErrorBoundary>
+            );
         }
 
         // If not authenticated

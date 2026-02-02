@@ -170,9 +170,9 @@ function verifyToken(req, res, next) {
 
 router.get('/users', verifyToken, (req, res) => {
     const currentUser = req.user;
-    db.all('SELECT username FROM users WHERE username != ?', [currentUser], (err, rows) => {
+    db.all('SELECT username, is_online, last_seen FROM users WHERE username != ?', [currentUser], (err, rows) => {
         if (err) return res.status(500).json({ error: 'Database error' });
-        res.json(rows.map(r => r.username));
+        res.json(rows);
     });
 });
 
