@@ -10,7 +10,9 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [inputText, setInputText] = useState('');
     const [isUploading, setIsUploading] = useState(false);
     const [users, setUsers] = useState([]);
+    const [isLoadingUsers, setIsLoadingUsers] = useState(true);
     const [selectedUser, setSelectedUser] = useState(null);
+    const [isLoadingMessages, setIsLoadingMessages] = useState(false);
     const [typingUser, setTypingUser] = useState(null);
     const [showPicker, setShowPicker] = useState(false);
     const [fullscreenImage, setFullscreenImage] = useState(null);
@@ -108,6 +110,7 @@ export default function Chat({ user, onLogout, onSettings }) {
         initiateSocket(user.token);
 
         // Load available users
+        setIsLoadingUsers(true);
         getUsers(user.token).then(data => {
             if (Array.isArray(data)) {
                 // handle both old string array and new object array for safety during migration
@@ -120,6 +123,8 @@ export default function Chat({ user, onLogout, onSettings }) {
         }).catch(err => {
             console.error("Failed to load users:", err);
             setUsers([]);
+        }).finally(() => {
+            setIsLoadingUsers(false);
         });
 
         const unsubscribeUserStatus = subscribeToUserStatus(({ username, is_online, last_seen }) => {
@@ -143,12 +148,14 @@ export default function Chat({ user, onLogout, onSettings }) {
     useEffect(() => {
         if (selectedUser) {
             setMessages([]); // Clear previous messages
+            setIsLoadingMessages(true);
             isHistoryLoadRef.current = true;
             joinChat(selectedUser);
 
             // Subscribe to history for this specific room
             const unsubscribeHistory = subscribeToHistory((history) => {
                 setMessages(history);
+                setIsLoadingMessages(false);
             });
 
             // Subscribe to live messages
@@ -209,6 +216,7 @@ export default function Chat({ user, onLogout, onSettings }) {
 
             return () => {
                 leaveChat(selectedUser);
+                setIsLoadingMessages(false);
                 if (unsubscribeHistory) unsubscribeHistory();
                 if (unsubscribeMessages) unsubscribeMessages();
                 if (unsubscribeTyping) unsubscribeTyping();
@@ -420,8 +428,6 @@ export default function Chat({ user, onLogout, onSettings }) {
         }
     };
 
-
-
     return (
         <div className="flex bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0 w-full" style={{ height: '100dvh' }}>
             {/* Sidebar (Responsive) */}
@@ -455,36 +461,48 @@ export default function Chat({ user, onLogout, onSettings }) {
                 <div className="p-4 overflow-y-auto flex-1 bg-gradient-to-b from-dark-lighter to-dark">
                     <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 px-2">Users</div>
                     <div className="space-y-2">
-                        {users.map((u, idx) => (
-                            <div
-                                key={idx}
-                                onClick={() => setSelectedUser(u.username)}
-                                className={`
-                                    p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
-                                    ${selectedUser === u.username
-                                        ? 'bg-primary/10 border-primary/50 shadow-md shadow-primary/5'
-                                        : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
-                                    }
-                                `}
-                            >
-                                <div className={`relative w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-colors ${selectedUser === u.username ? 'bg-primary' : 'bg-slate-700'}`}>
-                                    {u.username[0].toUpperCase()}
-                                    {u.is_online === 1 && (
-                                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-dark rounded-full"></span>
-                                    )}
+                        {isLoadingUsers ? (
+                            // Skeleton Loader for Users
+                            Array.from({ length: 3 }).map((_, i) => (
+                                <div key={i} className="p-3 rounded-xl border border-slate-700/30 bg-slate-800/30 flex items-center gap-3 animate-pulse">
+                                    <div className="w-10 h-10 rounded-full bg-slate-700"></div>
+                                    <div className="flex-1 space-y-2">
+                                        <div className="h-4 bg-slate-700 rounded w-24"></div>
+                                        <div className="h-3 bg-slate-700 rounded w-16"></div>
+                                    </div>
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <h4 className={`font-semibold ${selectedUser === u.username ? 'text-white' : 'text-slate-200'}`}>{u.username}</h4>
-                                    <p className="text-xs text-slate-500 truncate">
-                                        {u.is_online === 1 ? 'Online' : 'Offline'}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                        {users.length === 0 && (
+                            ))
+                        ) : users.length === 0 ? (
                             <div className="text-center py-10 text-slate-500 italic text-sm">
                                 No other users found. Invite someone!
                             </div>
+                        ) : (
+                            users.map((u, idx) => (
+                                <div
+                                    key={idx}
+                                    onClick={() => setSelectedUser(u.username)}
+                                    className={`
+                                        p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
+                                        ${selectedUser === u.username
+                                            ? 'bg-primary/10 border-primary/50 shadow-md shadow-primary/5'
+                                            : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
+                                        }
+                                    `}
+                                >
+                                    <div className={`relative w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-colors ${selectedUser === u.username ? 'bg-primary' : 'bg-slate-700'}`}>
+                                        {u.username[0].toUpperCase()}
+                                        {u.is_online === 1 && (
+                                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-dark rounded-full"></span>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className={`font-semibold ${selectedUser === u.username ? 'text-white' : 'text-slate-200'}`}>{u.username}</h4>
+                                        <p className="text-xs text-slate-500 truncate">
+                                            {u.is_online === 1 ? 'Online' : 'Offline'}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))
                         )}
                     </div>
                 </div>
@@ -546,36 +564,43 @@ export default function Chat({ user, onLogout, onSettings }) {
                         </div>
 
 
+
                         {/* Messages */}
                         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
-                            {messages.length === 0 && (
+                            {isLoadingMessages ? (
+                                <div className="flex-1 flex flex-col items-center justify-center h-full">
+                                    <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin"></div>
+                                    <p className="text-slate-500 mt-4 text-sm font-medium animate-pulse">Loading conversation...</p>
+                                </div>
+                            ) : messages.length === 0 ? (
                                 <div className="text-center py-10 text-slate-500">
                                     <p>No messages yet. Say hello!</p>
                                 </div>
-                            )}
-                            {messages.map((msg, idx) => {
-                                const isMe = msg.sender === user.username;
-                                return (
-                                    <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
-                                        <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
-                                            <span className="text-[10px] text-slate-500 mb-1 px-1 flex items-center gap-1">
-                                                {msg.sender} • {formatMessageTime(msg.timestamp)}
-                                                {isMe && (
-                                                    msg.status === 'read' ?
-                                                        <CheckCheck size={14} className="text-blue-500" /> :
-                                                        <Check size={14} className="text-slate-500" />
-                                                )}
-                                            </span>
-                                            <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
-                                                ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
-                                                : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')
-                                                }`}>
-                                                {renderMessageContent(msg)}
+                            ) : (
+                                messages.map((msg, idx) => {
+                                    const isMe = msg.sender === user.username;
+                                    return (
+                                        <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
+                                            <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
+                                                <span className="text-[10px] text-slate-500 mb-1 px-1 flex items-center gap-1">
+                                                    {msg.sender} • {formatMessageTime(msg.timestamp)}
+                                                    {isMe && (
+                                                        msg.status === 'read' ?
+                                                            <CheckCheck size={14} className="text-blue-500" /> :
+                                                            <Check size={14} className="text-slate-500" />
+                                                    )}
+                                                </span>
+                                                <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
+                                                    ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
+                                                    : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')
+                                                    }`}>
+                                                    {renderMessageContent(msg)}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                )
-                            })}
+                                    )
+                                })
+                            )}
                             <div ref={messagesEndRef} />
                         </div>
 
