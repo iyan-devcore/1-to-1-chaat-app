@@ -24,6 +24,25 @@ const initDb = async () => {
                 last_seen DATETIME
             )`);
 
+      // Groups table
+      db.run(`CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                created_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+      // Group Members table
+      db.run(`CREATE TABLE IF NOT EXISTS group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER,
+                user_id INTEGER,
+                joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(group_id) REFERENCES groups(id),
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                UNIQUE(group_id, user_id)
+            )`);
+
       // Messages table
       db.run(`CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +55,17 @@ const initDb = async () => {
                 fileSize INTEGER,
                 status TEXT DEFAULT 'sent',
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+      // Contacts table
+      db.run(`CREATE TABLE IF NOT EXISTS contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                contact_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(contact_id) REFERENCES users(id),
+                UNIQUE(user_id, contact_id)
             )`);
 
       // Check for recipient/status column migration in messages

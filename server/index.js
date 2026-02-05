@@ -6,6 +6,7 @@ const path = require('path');
 
 const { router: authRouter, sessions } = require('./routes/auth');
 const uploadRouter = require('./routes/upload');
+const groupRouter = require('./routes/groups');
 const chatSocket = require('./websocket/chat');
 
 const app = express();
@@ -24,6 +25,7 @@ app.use(express.json());
 // Routes
 app.use('/auth', authRouter);
 app.use('/api', uploadRouter);
+app.use('/api/groups', groupRouter);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Socket.IO

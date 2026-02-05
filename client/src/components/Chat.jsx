@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping, markRead, subscribeToStatusUpdates, subscribeToUserStatus } from '../services/socket';
-import { uploadFile, getUsers } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X, Check, CheckCheck } from 'lucide-react';
+import { uploadFile, getUsers, searchUsers, addContact, removeContact, createGroup, getGroups } from '../services/api';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X, Check, CheckCheck, UserPlus, Search, Users, PlusCircle } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
 import ExpressionPicker from './ExpressionPicker';
 
@@ -16,6 +16,16 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [typingUser, setTypingUser] = useState(null);
     const [showPicker, setShowPicker] = useState(false);
     const [fullscreenImage, setFullscreenImage] = useState(null);
+    const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+    const [searchResults, setSearchResults] = useState([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const searchTimeoutRef = useRef(null);
+
+    // Group Chat State
+    const [groups, setGroups] = useState([]);
+    const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
+    const [newGroupName, setNewGroupName] = useState('');
+    const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
 
     // Recording State
     const [isRecording, setIsRecording] = useState(false);
@@ -124,8 +134,14 @@ export default function Chat({ user, onLogout, onSettings }) {
             console.error("Failed to load users:", err);
             setUsers([]);
         }).finally(() => {
+        }).finally(() => {
             setIsLoadingUsers(false);
         });
+
+        // Load Groups
+        getGroups(user.token).then(data => {
+            setGroups(data || []);
+        }).catch(console.error);
 
         const unsubscribeUserStatus = subscribeToUserStatus(({ username, is_online, last_seen }) => {
             setUsers(prev => prev.map(u => {
@@ -391,7 +407,28 @@ export default function Chat({ user, onLogout, onSettings }) {
                     </div>
                 );
             default:
-                return <p className="whitespace-pre-wrap break-words">{msg.content}</p>;
+                // Parse and render links
+                return (
+                    <p className="whitespace-pre-wrap break-words">
+                        {msg.content.split(/(https?:\/\/[^\s]+)/g).map((part, i) => {
+                            if (part.match(/https?:\/\/[^\s]+/)) {
+                                return (
+                                    <a
+                                        key={i}
+                                        href={part}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-400 hover:underline break-all"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        {part}
+                                    </a>
+                                );
+                            }
+                            return part;
+                        })}
+                    </p>
+                );
         }
     };
 
@@ -428,8 +465,208 @@ export default function Chat({ user, onLogout, onSettings }) {
         }
     };
 
+    // Contact Management Helpers
+    const handleSearchUsers = (query) => {
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        if (!query.trim()) {
+            setSearchResults([]);
+            return;
+        }
+
+        setIsSearching(true);
+        searchTimeoutRef.current = setTimeout(async () => {
+            try {
+                const results = await searchUsers(query, user.token);
+                setSearchResults(results);
+            } catch (err) {
+                console.error(err);
+            } finally {
+                setIsSearching(false);
+            }
+        }, 500);
+    };
+
+    const handleAddContact = async (username) => {
+        try {
+            await addContact(username, user.token);
+            const contacts = await getUsers(user.token);
+            const formatted = contacts.map(u => typeof u === 'string' ? { username: u, is_online: 0 } : u);
+            setUsers(formatted);
+            setIsAddUserModalOpen(false);
+            setSearchResults([]);
+        } catch (err) {
+            alert(err.response?.data?.error || 'Failed to add contact');
+        }
+    };
+
+    const handleRemoveContact = async (e, username) => {
+        e.stopPropagation();
+        if (!window.confirm(`Remove ${username} from contacts?`)) return;
+
+        try {
+            await removeContact(username, user.token);
+            setUsers(prev => prev.filter(u => u.username !== username));
+            if (selectedUser === username) setSelectedUser(null);
+        } catch (err) {
+            console.error(err);
+            alert('Failed to remove contact');
+        }
+    };
+
+    const handleCreateGroup = async () => {
+        if (!newGroupName.trim()) return;
+        try {
+            const newGroup = await createGroup(newGroupName, selectedGroupMembers, user.token);
+            setGroups(prev => [...prev, newGroup]);
+            setIsCreateGroupModalOpen(false);
+            setNewGroupName('');
+            setSelectedGroupMembers([]);
+        } catch (err) {
+            console.error(err);
+            alert('Failed to create group');
+        }
+    };
+
+    const toggleGroupMemberSelection = (username) => {
+        setSelectedGroupMembers(prev =>
+            prev.includes(username)
+                ? prev.filter(u => u !== username)
+                : [...prev, username]
+        );
+    };
+
     return (
         <div className="flex bg-dark text-slate-200 font-sans overflow-hidden fixed inset-0 w-full" style={{ height: '100dvh' }}>
+            {/* Add User Modal */}
+            {isAddUserModalOpen && (
+                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-dark-lighter border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
+                        <button
+                            onClick={() => setIsAddUserModalOpen(false)}
+                            className="absolute top-4 right-4 text-slate-400 hover:text-white transition"
+                        >
+                            <X size={20} />
+                        </button>
+                        <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                            <UserPlus className="text-primary" size={24} />
+                            Add Contact
+                        </h3>
+                        <div className="relative mb-6">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                            <input
+                                type="text"
+                                autoFocus
+                                placeholder="Search users by name..."
+                                className="w-full bg-slate-900 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition"
+                                onChange={(e) => handleSearchUsers(e.target.value)}
+                            />
+                        </div>
+                        <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                            {isSearching ? (
+                                <div className="text-center text-slate-500 py-8 flex flex-col items-center gap-2">
+                                    <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin"></div>
+                                    <span>Searching directory...</span>
+                                </div>
+                            ) : searchResults.length === 0 ? (
+                                <div className="text-center text-slate-500 py-8">
+                                    <p>No new users found.</p>
+                                    <p className="text-xs text-slate-600 mt-1">Try a different name.</p>
+                                </div>
+                            ) : (
+                                searchResults.map((u, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 bg-slate-800/50 hover:bg-slate-800 rounded-xl transition border border-transparent hover:border-slate-700">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-sm font-bold">
+                                                {u.username[0].toUpperCase()}
+                                            </div>
+                                            <span className="text-white font-medium">{u.username}</span>
+                                        </div>
+                                        <button
+                                            onClick={() => handleAddContact(u.username)}
+                                            className="p-2 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition"
+                                            title="Add User"
+                                        >
+                                            <UserPlus size={18} />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Create Group Modal */}
+            {isCreateGroupModalOpen && (
+                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-dark-lighter border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl relative flex flex-col max-h-[80vh]">
+                        <button
+                            onClick={() => setIsCreateGroupModalOpen(false)}
+                            className="absolute top-4 right-4 text-slate-400 hover:text-white transition"
+                        >
+                            <X size={20} />
+                        </button>
+                        <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                            <Users className="text-secondary" size={24} />
+                            Create New Group
+                        </h3>
+
+                        <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+                            <div>
+                                <label className="text-sm text-slate-400 mb-1 block">Group Name</label>
+                                <input
+                                    type="text"
+                                    value={newGroupName}
+                                    onChange={(e) => setNewGroupName(e.target.value)}
+                                    placeholder="e.g., Weekend Plans"
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white focus:outline-none focus:border-secondary transition"
+                                />
+                            </div>
+
+                            <div className="flex-1 overflow-hidden flex flex-col">
+                                <label className="text-sm text-slate-400 mb-2 block">Select Members</label>
+                                <div className="overflow-y-auto space-y-2 flex-1 pr-1 custom-scrollbar border border-slate-700/50 rounded-xl p-2 bg-slate-900/30">
+                                    {users.length === 0 ? (
+                                        <p className="text-slate-500 text-center text-sm py-4">No contacts to add.</p>
+                                    ) : (
+                                        users.map(u => (
+                                            <div
+                                                key={u.username}
+                                                onClick={() => toggleGroupMemberSelection(u.username)}
+                                                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition ${selectedGroupMembers.includes(u.username)
+                                                    ? 'bg-secondary/20 border border-secondary/50'
+                                                    : 'bg-slate-800/50 border border-transparent hover:bg-slate-800'
+                                                    }`}
+                                            >
+                                                <div className={`w-5 h-5 rounded border flex items-center justify-center transition ${selectedGroupMembers.includes(u.username) ? 'bg-secondary border-secondary' : 'border-slate-500'
+                                                    }`}>
+                                                    {selectedGroupMembers.includes(u.username) && <Check size={14} className="text-white" />}
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">
+                                                        {u.username[0].toUpperCase()}
+                                                    </div>
+                                                    <span className="text-slate-200">{u.username}</span>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleCreateGroup}
+                                disabled={!newGroupName.trim()}
+                                className="w-full py-3 bg-secondary hover:bg-secondary/90 text-white rounded-xl font-bold shadow-lg shadow-secondary/20 transition disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                            >
+                                Create Group
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )
+            }
+
             {/* Sidebar (Responsive) */}
             <div className={`
                 ${selectedUser ? 'hidden md:flex' : 'flex'} 
@@ -459,7 +696,16 @@ export default function Chat({ user, onLogout, onSettings }) {
                 </div>
 
                 <div className="p-4 overflow-y-auto flex-1 bg-gradient-to-b from-dark-lighter to-dark">
-                    <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 px-2">Users</div>
+                    <div className="flex items-center justify-between px-2 mb-4">
+                        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Contacts</div>
+                        <button
+                            onClick={() => setIsAddUserModalOpen(true)}
+                            className="p-1.5 hover:bg-slate-700/50 rounded-lg text-primary hover:shadow-sm transition"
+                            title="Add Contact"
+                        >
+                            <UserPlus size={16} />
+                        </button>
+                    </div>
                     <div className="space-y-2">
                         {isLoadingUsers ? (
                             // Skeleton Loader for Users
@@ -473,8 +719,14 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 </div>
                             ))
                         ) : users.length === 0 ? (
-                            <div className="text-center py-10 text-slate-500 italic text-sm">
-                                No other users found. Invite someone!
+                            <div className="text-center py-10 text-slate-500 italic text-sm flex flex-col items-center gap-3">
+                                <p>No contacts yet.</p>
+                                <button
+                                    onClick={() => setIsAddUserModalOpen(true)}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-primary text-xs font-bold transition border border-slate-700"
+                                >
+                                    Add your first contact
+                                </button>
                             </div>
                         ) : (
                             users.map((u, idx) => (
@@ -482,7 +734,7 @@ export default function Chat({ user, onLogout, onSettings }) {
                                     key={idx}
                                     onClick={() => setSelectedUser(u.username)}
                                     className={`
-                                        p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
+                                        group p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200 relative
                                         ${selectedUser === u.username
                                             ? 'bg-primary/10 border-primary/50 shadow-md shadow-primary/5'
                                             : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
@@ -501,9 +753,58 @@ export default function Chat({ user, onLogout, onSettings }) {
                                             {u.is_online === 1 ? 'Online' : 'Offline'}
                                         </p>
                                     </div>
+
+                                    {/* Delete Button - Shows on group hover or if selected */}
+                                    <button
+                                        onClick={(e) => handleRemoveContact(e, u.username)}
+                                        className={`
+                                            p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition opacity-0 group-hover:opacity-100 focus:opacity-100
+                                            ${selectedUser === u.username ? 'opacity-100' : ''}
+                                        `}
+                                        title="Remove Contact"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
                                 </div>
                             ))
                         )}
+                    </div>
+
+                    {/* Groups Section */}
+                    <div className="flex items-center justify-between px-2 mb-4 mt-8">
+                        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Groups</div>
+                        <button
+                            onClick={() => setIsCreateGroupModalOpen(true)}
+                            className="p-1.5 hover:bg-slate-700/50 rounded-lg text-secondary hover:shadow-sm transition"
+                            title="Create Group"
+                        >
+                            <PlusCircle size={16} />
+                        </button>
+                    </div>
+                    <div className="space-y-2 pb-4">
+                        {groups.map((g) => (
+                            <div
+                                key={g.id}
+                                onClick={() => setSelectedUser(`group:${g.id}`)}
+                                className={`
+                                    p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-200
+                                    ${selectedUser === `group:${g.id}`
+                                        ? 'bg-secondary/10 border-secondary/50 shadow-md shadow-secondary/5'
+                                        : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/80 hover:border-slate-600'
+                                    }
+                                `}
+                            >
+                                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center text-white border border-slate-600`}>
+                                    <Users size={20} className={selectedUser === `group:${g.id}` ? 'text-secondary' : 'text-slate-400'} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h4 className={`font-semibold ${selectedUser === `group:${g.id}` ? 'text-white' : 'text-slate-200'}`}>{g.name}</h4>
+                                    <p className="text-xs text-slate-500 truncate">
+                                        Group Chat
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>
@@ -529,34 +830,60 @@ export default function Chat({ user, onLogout, onSettings }) {
                                 <button onClick={() => setSelectedUser(null)} className="md:hidden p-2 -ml-2 text-slate-400 hover:text-white">
                                     <ArrowLeft size={20} />
                                 </button>
-                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
-                                    {selectedUser[0].toUpperCase()}
-                                </div>
+
                                 {(() => {
-                                    const targetUserObj = users.find(u => u.username === selectedUser);
-                                    const isOnline = targetUserObj?.is_online;
-                                    const lastSeen = targetUserObj?.last_seen;
+                                    const isGroup = selectedUser?.startsWith('group:');
+                                    let displayTitle = selectedUser;
+                                    let statusContent = null;
+                                    let avatar = null;
+
+                                    if (isGroup) {
+                                        const groupId = parseInt(selectedUser.split(':')[1]);
+                                        const group = groups.find(g => g.id === groupId);
+                                        displayTitle = group ? group.name : 'Unknown Group';
+                                        statusContent = <span className="text-xs text-slate-400 font-medium block truncate">Group Chat</span>;
+                                        avatar = (
+                                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-600 flex items-center justify-center text-white font-bold border border-slate-500">
+                                                <Users size={20} />
+                                            </div>
+                                        );
+                                    } else {
+                                        const targetUserObj = users.find(u => u.username === selectedUser);
+                                        const isOnline = targetUserObj?.is_online;
+                                        const lastSeen = targetUserObj?.last_seen;
+
+                                        avatar = (
+                                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                                                {selectedUser[0].toUpperCase()}
+                                            </div>
+                                        );
+
+                                        statusContent = typingUser === selectedUser ? (
+                                            <span className="text-xs text-primary font-medium animate-pulse block truncate">
+                                                typing...
+                                            </span>
+                                        ) : isOnline ? (
+                                            <span className="text-xs text-primary font-medium block truncate">
+                                                Online
+                                            </span>
+                                        ) : lastSeen ? (
+                                            <span className="text-xs text-slate-400 block truncate">
+                                                {formatLastSeen(lastSeen)}
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-slate-400 block truncate">
+                                                Offline
+                                            </span>
+                                        );
+                                    }
 
                                     return (
                                         <>
-                                            <span className="font-bold text-white block truncate mb-0.5">{selectedUser}</span>
-                                            {typingUser === selectedUser ? (
-                                                <span className="text-xs text-primary font-medium animate-pulse block truncate">
-                                                    typing...
-                                                </span>
-                                            ) : isOnline ? (
-                                                <span className="text-xs text-primary font-medium block truncate">
-                                                    Online
-                                                </span>
-                                            ) : lastSeen ? (
-                                                <span className="text-xs text-slate-400 block truncate">
-                                                    {formatLastSeen(lastSeen)}
-                                                </span>
-                                            ) : (
-                                                <span className="text-xs text-slate-400 block truncate">
-                                                    Offline
-                                                </span>
-                                            )}
+                                            {avatar}
+                                            <div className="min-w-0">
+                                                <span className="font-bold text-white block truncate mb-0.5">{displayTitle}</span>
+                                                {statusContent}
+                                            </div>
                                         </>
                                     );
                                 })()}
@@ -583,7 +910,10 @@ export default function Chat({ user, onLogout, onSettings }) {
                                         <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
                                             <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
                                                 <span className="text-[10px] text-slate-500 mb-1 px-1 flex items-center gap-1">
-                                                    {msg.sender} • {formatMessageTime(msg.timestamp)}
+                                                    {/* Show sender name if it's a group and not me */}
+                                                    {(!isMe && selectedUser.startsWith('group:')) && <span className="font-bold text-secondary">{msg.sender}</span>}
+                                                    {(!isMe && selectedUser.startsWith('group:')) && <span>•</span>}
+                                                    {formatMessageTime(msg.timestamp)}
                                                     {isMe && (
                                                         msg.status === 'read' ?
                                                             <CheckCheck size={14} className="text-blue-500" /> :

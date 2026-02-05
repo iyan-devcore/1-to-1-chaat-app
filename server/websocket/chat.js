@@ -23,37 +23,65 @@ module.exports = (io, sessions) => {
             }
         });
 
-        // Client requests history with a specific user
-        socket.on('join_chat', (targetUser) => {
-            const roomName = [username, targetUser].sort().join('_');
-            socket.join(roomName);
+        // Client requests history with a specific user or group
+        socket.on('join_chat', (target) => {
+            let roomName;
 
-            // Mark unread messages from targetUser as read
-            db.run(
-                "UPDATE messages SET status = 'read' WHERE sender = ? AND recipient = ? AND status != 'read'",
-                [targetUser, username],
-                function (err) {
-                    if (!err && this.changes > 0) {
-                        // Notify the sender (targetUser) that their messages were read
-                        io.to(targetUser).emit('status_update', { reader: username });
+            if (target.startsWith('group:')) {
+                // It's a group
+                roomName = target; // Room is literally 'group:123'
+                socket.join(roomName);
+
+                // Fetch group history
+                // We store recipient as 'group:ID' in DB
+                db.all(
+                    "SELECT * FROM messages WHERE recipient = ? ORDER BY timestamp ASC",
+                    [roomName],
+                    (err, rows) => {
+                        if (err) return;
+                        socket.emit('history', rows);
                     }
+                );
 
-                    // Fetch history for these two users
-                    db.all(
-                        "SELECT * FROM messages WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) ORDER BY timestamp ASC",
-                        [username, targetUser, targetUser, username],
-                        (err, rows) => {
-                            if (err) return;
-                            socket.emit('history', rows);
+            } else {
+                // It's a 1-to-1 chat
+                const targetUser = target;
+                roomName = [username, targetUser].sort().join('_');
+                socket.join(roomName);
+
+                // Mark unread messages from targetUser as read
+                db.run(
+                    "UPDATE messages SET status = 'read' WHERE sender = ? AND recipient = ? AND status != 'read'",
+                    [targetUser, username],
+                    function (err) {
+                        if (!err && this.changes > 0) {
+                            // Notify the sender (targetUser) that their messages were read
+                            io.to(targetUser).emit('status_update', { reader: username });
                         }
-                    );
-                }
-            );
+
+                        // Fetch history for these two users
+                        db.all(
+                            "SELECT * FROM messages WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) ORDER BY timestamp ASC",
+                            [username, targetUser, targetUser, username],
+                            (err, rows) => {
+                                if (err) return;
+                                socket.emit('history', rows);
+                            }
+                        );
+                    }
+                );
+            }
         });
 
-        // Client leaves chat with a specific user
-        socket.on('leave_chat', (targetUser) => {
-            const roomName = [username, targetUser].sort().join('_');
+        // Client leaves chat
+        socket.on('leave_chat', (target) => {
+            if (!target) return;
+            let roomName;
+            if (target.startsWith('group:')) {
+                roomName = target;
+            } else {
+                roomName = [username, target].sort().join('_');
+            }
             socket.leave(roomName);
         });
 
@@ -95,10 +123,15 @@ module.exports = (io, sessions) => {
                     timestamp: new Date().toISOString()
                 };
 
-                // Identify the shared room
-                const roomName = [username, recipient].sort().join('_');
+                // Identify the room
+                let roomName;
+                if (recipient.startsWith('group:')) {
+                    roomName = recipient;
+                } else {
+                    roomName = [username, recipient].sort().join('_');
+                }
 
-                // Emit to the room (covers both users if they are focused on this chat)
+                // Emit to the room
                 io.to(roomName).emit('message', newMessage);
             });
             stmt.finalize();

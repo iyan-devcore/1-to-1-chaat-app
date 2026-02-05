@@ -170,10 +170,106 @@ function verifyToken(req, res, next) {
 
 router.get('/users', verifyToken, (req, res) => {
     const currentUser = req.user;
-    db.all('SELECT username, is_online, last_seen FROM users WHERE username != ?', [currentUser], (err, rows) => {
+    // Return only added contacts
+    const sql = `
+        SELECT u.username, u.is_online, u.last_seen 
+        FROM users u
+        JOIN contacts c ON u.id = c.contact_id
+        JOIN users self ON self.id = c.user_id
+        WHERE self.username = ?
+    `;
+    db.all(sql, [currentUser], (err, rows) => {
         if (err) return res.status(500).json({ error: 'Database error' });
         res.json(rows);
     });
+});
+
+router.get('/search', verifyToken, (req, res) => {
+    const currentUser = req.user;
+    const query = req.query.q || '';
+    if (!query) return res.json([]);
+
+    const sql = `
+        SELECT username FROM users 
+        WHERE username LIKE ? 
+        AND username != ?
+        AND id NOT IN (
+            SELECT c.contact_id 
+            FROM contacts c 
+            JOIN users u ON u.id = c.user_id 
+            WHERE u.username = ?
+        )
+        LIMIT 20
+    `;
+    db.all(sql, [`%${query}%`, currentUser, currentUser], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        res.json(rows);
+    });
+});
+
+router.post('/contacts', verifyToken, async (req, res) => {
+    const currentUser = req.user;
+    const { username } = req.body;
+
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    try {
+        const userId = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM users WHERE username = ?', [currentUser], (err, row) => {
+                if (err || !row) reject('User not found');
+                else resolve(row ? row.id : null);
+            });
+        });
+
+        const contactId = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM users WHERE username = ?', [username], (err, row) => {
+                if (err || !row) reject('Contact not found');
+                else resolve(row ? row.id : null);
+            });
+        });
+
+        db.run('INSERT INTO contacts (user_id, contact_id) VALUES (?, ?)', [userId, contactId], (err) => {
+            if (err) {
+                if (err.message.includes('UNIQUE constraint failed')) {
+                    return res.status(400).json({ error: 'User already in contacts' });
+                }
+                return res.status(500).json({ error: 'Database error' });
+            }
+            res.json({ success: true });
+        });
+
+    } catch (e) {
+        res.status(400).json({ error: e });
+    }
+});
+
+router.delete('/contacts/:contactUsername', verifyToken, async (req, res) => {
+    const currentUser = req.user;
+    const { contactUsername } = req.params;
+
+    try {
+        const userId = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM users WHERE username = ?', [currentUser], (err, row) => {
+                if (err || !row) reject('User not found');
+                else resolve(row ? row.id : null);
+            });
+        });
+
+        const contactId = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM users WHERE username = ?', [contactUsername], (err, row) => {
+                if (err || !row) reject('Contact not found');
+                else resolve(row ? row.id : null);
+            });
+        });
+
+        db.run('DELETE FROM contacts WHERE user_id = ? AND contact_id = ?', [userId, contactId], (err) => {
+            if (err) return res.status(500).json({ error: 'Database error' });
+            res.json({ success: true });
+        });
+
+    } catch (e) {
+        res.status(400).json({ error: e });
+    }
 });
 
 module.exports = { router, sessions, verifyToken };

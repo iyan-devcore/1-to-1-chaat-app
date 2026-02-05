@@ -42,4 +42,39 @@ export const uploadFile = async (file, token) => {
     return response.data;
 };
 
+export const searchUsers = async (query, token) => {
+    const response = await api.get(`/auth/search?q=${query}`, {
+        headers: { Authorization: token }
+    });
+    return response.data;
+};
+
+export const addContact = async (username, token) => {
+    const response = await api.post('/auth/contacts', { username }, {
+        headers: { Authorization: token }
+    });
+    return response.data;
+};
+
+export const removeContact = async (username, token) => {
+    const response = await api.delete(`/auth/contacts/${username}`, {
+        headers: { Authorization: token }
+    });
+    return response.data;
+};
+
+export const getGroups = async (token) => {
+    const response = await api.get('/api/groups', {
+        headers: { Authorization: token }
+    });
+    return response.data;
+};
+
+export const createGroup = async (name, members, token) => {
+    const response = await api.post('/api/groups', { name, members }, {
+        headers: { Authorization: token }
+    });
+    return response.data;
+};
+
 export default api;
