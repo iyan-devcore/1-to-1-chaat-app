@@ -305,10 +305,11 @@ export default function Chat({ user, onLogout, onSettings }) {
             let type = 'file';
             if (file.type.startsWith('image/')) type = 'image';
             if (file.type.startsWith('audio/')) type = 'audio';
+            if (file.type.startsWith('video/')) type = 'video';
 
             sendMessage({
                 recipient: selectedUser,
-                content: `Sent a file: ${data.fileName}`,
+                content: `Sent a ${type}: ${data.fileName}`,
                 type,
                 fileUrl: data.fileUrl,
                 fileName: data.fileName,
@@ -378,6 +379,19 @@ export default function Chat({ user, onLogout, onSettings }) {
                         />
                         <a href={msg.fileUrl} download={msg.fileName} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                             <Download size={12} /> Download full size
+                        </a>
+                    </div>
+                );
+            case 'video':
+                return (
+                    <div className="space-y-2">
+                        <video
+                            controls
+                            src={msg.fileUrl}
+                            className="max-w-full sm:max-w-xs rounded-lg shadow-md border border-slate-700/50"
+                        />
+                        <a href={msg.fileUrl} download={msg.fileName} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                            <Download size={12} /> Download video
                         </a>
                     </div>
                 );
