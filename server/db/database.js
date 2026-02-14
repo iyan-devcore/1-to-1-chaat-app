@@ -54,6 +54,7 @@ const initDb = async () => {
                 fileName TEXT,
                 fileSize INTEGER,
                 status TEXT DEFAULT 'sent',
+                reply_to TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
 
@@ -80,6 +81,11 @@ const initDb = async () => {
           if (!hasStatus) {
             console.log("Migrating DB: Adding status column");
             db.run("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'");
+          }
+          const hasReplyTo = rows.some(r => r.name === 'reply_to');
+          if (!hasReplyTo) {
+            console.log("Migrating DB: Adding reply_to column");
+            db.run("ALTER TABLE messages ADD COLUMN reply_to TEXT");
           }
         }
 

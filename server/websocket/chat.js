@@ -101,13 +101,15 @@ module.exports = (io, sessions) => {
         });
 
         socket.on('message', (msg) => {
-            // msg: { recipient, content, type, fileUrl, fileName, fileSize }
-            const { recipient, content, type, fileUrl, fileName, fileSize } = msg;
+            // msg: { recipient, content, type, fileUrl, fileName, fileSize, replyTo }
+            const { recipient, content, type, fileUrl, fileName, fileSize, replyTo } = msg;
 
             if (!recipient) return; // Must have recipient
 
-            const stmt = db.prepare("INSERT INTO messages (sender, recipient, content, type, fileUrl, fileName, fileSize, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            stmt.run(username, recipient, content, type || 'text', fileUrl, fileName, fileSize, 'sent', function (err) {
+            const replyToData = replyTo ? JSON.stringify(replyTo) : null;
+
+            const stmt = db.prepare("INSERT INTO messages (sender, recipient, content, type, fileUrl, fileName, fileSize, status, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            stmt.run(username, recipient, content, type || 'text', fileUrl, fileName, fileSize, 'sent', replyToData, function (err) {
                 if (err) return console.error(err);
 
                 const newMessage = {
@@ -120,18 +122,17 @@ module.exports = (io, sessions) => {
                     fileName,
                     fileSize,
                     status: 'sent',
+                    reply_to: replyToData, // Keeping consistency with DB column name for simplicity in frontend
                     timestamp: new Date().toISOString()
                 };
 
-                // Identify the room
+                // Identify the room and emit
                 let roomName;
                 if (recipient.startsWith('group:')) {
                     roomName = recipient;
                 } else {
                     roomName = [username, recipient].sort().join('_');
                 }
-
-                // Emit to the room
                 io.to(roomName).emit('message', newMessage);
             });
             stmt.finalize();

@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { initiateSocket, disconnectSocket, sendMessage, subscribeToMessages, subscribeToHistory, joinChat, leaveChat, sendTyping, sendStopTyping, subscribeToTyping, markRead, subscribeToStatusUpdates, subscribeToUserStatus } from '../services/socket';
 import { uploadFile, getUsers, searchUsers, addContact, removeContact, createGroup, getGroups } from '../services/api';
-import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X, Check, CheckCheck, UserPlus, Search, Users, PlusCircle } from 'lucide-react';
+import { Send, Paperclip, FileText, Download, LogOut, Image as ImageIcon, Mic, User, Settings as SettingsIcon, MessageSquare, ArrowLeft, Smile, Trash2, X, Check, CheckCheck, UserPlus, Search, Users, PlusCircle, Reply, ChevronDown } from 'lucide-react';
 import { compressImage } from '../utils/imageCompression';
 import ExpressionPicker from './ExpressionPicker';
+import { SwipeableMessageItem } from './SwipeableMessageItem';
 
 export default function Chat({ user, onLogout, onSettings }) {
     const [messages, setMessages] = useState([]);
@@ -26,6 +27,10 @@ export default function Chat({ user, onLogout, onSettings }) {
     const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
     const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
+
+    // Reply State
+    const [replyingTo, setReplyingTo] = useState(null);
+    const [showScrollButton, setShowScrollButton] = useState(false);
 
     // Recording State
     const [isRecording, setIsRecording] = useState(false);
@@ -105,8 +110,10 @@ export default function Chat({ user, onLogout, onSettings }) {
                 type: 'audio',
                 fileUrl: data.fileUrl,
                 fileName: data.fileName,
-                fileSize: data.fileSize
+                fileSize: data.fileSize,
+                replyTo: replyingTo
             });
+            setReplyingTo(null);
         } catch (err) {
             console.error('Audio upload failed', err);
             alert("Failed to send audio");
@@ -259,8 +266,14 @@ export default function Chat({ user, onLogout, onSettings }) {
 
     const handleSend = () => {
         if (!inputText.trim() || !selectedUser) return;
-        sendMessage({ content: inputText, type: 'text', recipient: selectedUser });
+        sendMessage({
+            content: inputText,
+            type: 'text',
+            recipient: selectedUser,
+            replyTo: replyingTo
+        });
         setInputText('');
+        setReplyingTo(null);
 
         // Stop typing immediately upon sending
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -313,8 +326,10 @@ export default function Chat({ user, onLogout, onSettings }) {
                 type,
                 fileUrl: data.fileUrl,
                 fileName: data.fileName,
-                fileSize: data.fileSize
+                fileSize: data.fileSize,
+                replyTo: replyingTo
             });
+            setReplyingTo(null);
         } catch (err) {
             console.error('Upload failed', err);
             alert('Upload failed');
@@ -337,8 +352,10 @@ export default function Chat({ user, onLogout, onSettings }) {
             type: 'sticker',
             fileUrl: url,
             fileName: 'sticker.gif',
-            fileSize: 0
+            fileSize: 0,
+            replyTo: replyingTo
         });
+        setReplyingTo(null);
         setShowPicker(false);
     };
 
@@ -355,8 +372,10 @@ export default function Chat({ user, onLogout, onSettings }) {
                 type: 'sticker',
                 fileUrl: data.fileUrl,
                 fileName: data.fileName,
-                fileSize: data.fileSize
+                fileSize: data.fileSize,
+                replyTo: replyingTo
             });
+            setReplyingTo(null);
             setShowPicker(false);
         } catch (err) {
             console.error('Sticker upload failed', err);
@@ -907,7 +926,15 @@ export default function Chat({ user, onLogout, onSettings }) {
 
 
                         {/* Messages */}
-                        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+                        <div
+                            className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700"
+                            style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+                            onScroll={(e) => {
+                                const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                                const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+                                setShowScrollButton(!isNearBottom);
+                            }}
+                        >
                             {isLoadingMessages ? (
                                 <div className="flex-1 flex flex-col items-center justify-center h-full">
                                     <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin"></div>
@@ -920,8 +947,22 @@ export default function Chat({ user, onLogout, onSettings }) {
                             ) : (
                                 messages.map((msg, idx) => {
                                     const isMe = msg.sender === user.username;
+                                    let replyContext = null;
+                                    try {
+                                        if (msg.reply_to) {
+                                            replyContext = typeof msg.reply_to === 'string' ? JSON.parse(msg.reply_to) : msg.reply_to;
+                                        }
+                                    } catch (e) {
+                                        // ignore bad json
+                                    }
+
                                     return (
-                                        <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up`}>
+                                        <SwipeableMessageItem
+                                            key={idx}
+                                            isMe={isMe}
+                                            onReply={() => setReplyingTo(msg)}
+                                            className="animate-slide-up mb-2"
+                                        >
                                             <div className={`flex flex-col max-w-[85%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
                                                 <span className="text-[10px] text-slate-500 mb-1 px-1 flex items-center gap-1">
                                                     {/* Show sender name if it's a group and not me */}
@@ -934,14 +975,28 @@ export default function Chat({ user, onLogout, onSettings }) {
                                                             <Check size={14} className="text-slate-500" />
                                                     )}
                                                 </span>
-                                                <div className={`p-3 md:p-4 rounded-2xl shadow-md ${isMe
+                                                <div className={`p-3 md:p-4 rounded-2xl shadow-md flex flex-col gap-1 w-full ${isMe
                                                     ? (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-gradient-to-br from-primary to-secondary text-white rounded-tr-none')
                                                     : (msg.type === 'sticker' ? 'bg-transparent shadow-none p-0' : 'bg-dark-lighter border border-slate-800 text-slate-200 rounded-tl-none')
                                                     }`}>
+
+                                                    {replyContext && (
+                                                        <div className={`mb-2 p-2 rounded-lg border-l-4 text-xs flex flex-col cursor-pointer hover:opacity-80 transition items-start ${isMe ? 'bg-black/20 border-white/50' : 'bg-black/20 border-secondary'}`}>
+                                                            <span className="font-bold opacity-100">{replyContext.sender}</span>
+                                                            <span className="truncate opacity-80 font-normal max-w-full">
+                                                                {replyContext.type === 'image' && <span className="flex items-center gap-1"><ImageIcon size={10} /> Image</span>}
+                                                                {replyContext.type === 'audio' && <span className="flex items-center gap-1"><Mic size={10} /> Audio</span>}
+                                                                {replyContext.type === 'sticker' && <span className="flex items-center gap-1"><Smile size={10} /> Sticker</span>}
+                                                                {replyContext.type === 'text' && replyContext.content}
+                                                                {!['text', 'image', 'audio', 'sticker'].includes(replyContext.type) && `[${replyContext.type}]`}
+                                                            </span>
+                                                        </div>
+                                                    )}
+
                                                     {renderMessageContent(msg)}
                                                 </div>
                                             </div>
-                                        </div>
+                                        </SwipeableMessageItem>
                                     )
                                 })
                             )}
@@ -949,7 +1004,32 @@ export default function Chat({ user, onLogout, onSettings }) {
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md flex-none z-10">
+                        <div className="p-4 md:p-6 bg-dark-lighter/90 border-t border-slate-800 backdrop-blur-md flex-none z-10 flex flex-col relative">
+                            {showScrollButton && (
+                                <button
+                                    onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
+                                    className="absolute -top-14 right-6 p-2 bg-slate-800 text-primary hover:bg-slate-700 hover:text-white rounded-full shadow-xl border border-slate-700/50 backdrop-blur-sm transition-all animate-fade-in hover:scale-110"
+                                    title="Scroll to bottom"
+                                >
+                                    <ChevronDown size={24} />
+                                </button>
+                            )}
+                            {replyingTo && (
+                                <div className="flex items-center justify-between bg-slate-800/80 p-3 rounded-xl mb-3 border-l-4 border-secondary animate-fade-in">
+                                    <div className="flex flex-col overflow-hidden">
+                                        <span className="text-secondary font-bold text-sm">Replying to {replyingTo.sender}</span>
+                                        <span className="text-slate-300 text-sm truncate opacity-80">
+                                            {replyingTo.type === 'text' ? replyingTo.content : `[${replyingTo.type}]`}
+                                        </span>
+                                    </div>
+                                    <button
+                                        onClick={() => setReplyingTo(null)}
+                                        className="p-1 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                            )}
                             {isRecording ? (
                                 <div className="flex-1 flex items-center gap-4 bg-slate-900 border border-red-500/30 rounded-full py-2 px-4 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-subtle">
                                     <div className="flex items-center gap-2 text-red-500 font-medium whitespace-nowrap min-w-[80px]">
